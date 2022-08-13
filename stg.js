@@ -5,32 +5,67 @@ function setup(){
     loadImg(1, "image/spaceship.png");
     loadImg(2, "image/missile.png");
     loadImg(3, "image/explode.png");
+    loadSound(0, "sound/bgm.m4a");
     for(var i=0; i<=4; i++) loadImg(4+i, "image/enemy"+i+".png");
     for(var i=0; i<=2; i++) loadImg(9+i, "image/item"+i+".png");
     loadImg(12, "image/laser.png");
+    loadImg(13, "image/title_ss.png");
     initSShip();
     initMissile();
     initObject();
 }
 
-var timer = 0;
 
 //WWS.jsに用意された、マイフレーム実行される関数
 function mainloop(){
     timer++;
-    drawBG(1);
-    moveSShip();
-    movemissile();
-    if(timer%60 == 0) setObject(1, 5, 1300, 60+rnd(600), -16, 0, 1);//敵1
-    if(timer%60 == 10)setObject(1, 6, 1300, 60+rnd(600), -12, 8, 3);//敵2
-    if(timer%60 == 20)setObject(1, 7, 1300, 360+rnd(300), -48, -10, 5);//敵3
-    if(timer%60 == 30)setObject(1, 8, 1300, rnd(720-192), -6, 0, 0);//障害物
-    moveObject();
-    //体力表示
-    for(i=0; i<10; i++) fRect(20+i*30, 660, 20, 40, "#8b0000");
-    for(i=0; i<energy; i++) fRect(20+i*30, 660, 20, 40, colorRGB(160-16*i, 240-12*i, 24*i));
-    drawEffect();
-    setItem();
+    drawBG(1*(1+stage*0.1));
+    switch(idx){
+        case 0://タイトル画面
+        drawImg(13, 200, 200);
+        if(timer%40 < 20)fText("Press [SPACE] or Click to start", 600, 540, 40, "cyan");
+        if(key[32]>0 || tapC>0){
+            initSShip();
+            initObject();
+            score = 0;
+            stage = 1;
+            idx = 1;
+            tmr = 0;
+            playBgm(0);
+        }
+        break;
+
+        case 1://ゲーム中
+        setEnemy();
+        setItem();
+        moveSShip();
+        moveMissile();
+        moveObject();
+        drawEffect();        
+        //体力表示
+        for(i=0; i<10; i++) fRect(20+i*30, 660, 20, 40, "#8b0000");
+        for(i=0; i<energy; i++) fRect(20+i*30, 660, 20, 40, colorRGB(160-16*i, 240-12*i, 24*i));
+
+        if(timer < 30*4) fText("STAGE "+stage, 600, 300, 50, "cyan")
+        if(30*114 < timer && timer < 30*118) fText("STAGE CLEAR", 600, 300, 50, "cyan");
+        if(timer == 30*120){
+            stage++;
+            timer = 0;
+        }
+        break;
+
+        case 2://ゲームオーバー
+        if(timer < 30*2 && timer%5 == 1) setEffect(ssX+rnd(120)-60, ssY+rnd(80)-40, 9);
+        moveMissile();
+        moveObject();
+        drawEffect();
+        if(score>=hisco) hisco = score;
+        fText("GAME OVER", 600, 300, 50, "red");
+        if(timer > 30*5) idx = 0;
+        break;
+    }
+    fText("SCORE "+score, 200, 50, 40, "white");
+    fText("HISCORE "+hisco, 600, 50, 40, "yellow");
 }
 
 //背景
@@ -40,7 +75,28 @@ function drawBG(spd){
     bgX = (bgX + spd) % 1200;
     drawImg(0, -bgX, 0);
     drawImg(0, 1200-bgX, 0);
+    var hy = 580;//地面の地平線のY座標
+    var ofsx = bgX%40;//縦のラインを移動させるオフセット値
+    lineW(2);
+    for(var i=1; i<=30; i++) {//縦のライン
+        var tx = i*40-ofsx;
+        var bx = i*240-ofsx*6-3000;
+        line(tx, hy, bx, 720, "silver");
+    }
+    for(var i=1; i<12; i++) {//横のライン
+        lineW(1+int(i/3));
+        line(0, hy, 1200, hy, "gray");
+        hy = hy + i*2;
+    }
 }
+
+//ゲームの進行を管理
+var idx = 0;
+var timer = 0;
+
+var score = 0;
+var hisco = 10000;
+var stage = 0;
 
 //自機の管理
 var ssX = 0;
@@ -48,11 +104,16 @@ var ssY = 0;
 var automa = 0;//弾の自動発射
 var energy = 0;//エネルギー
 var muteki = 0;//無敵状態
+var weapon = 0;//一度に打てる弾数
+var laser = 0;//レーザーの使用回数
 
 function initSShip(){
     ssX = 400;
     ssY = 360;
     energy = 10;
+    muteki = 0;
+    weapon = 0;
+    laser = 0
 }
 
 function moveSShip(){
@@ -91,10 +152,11 @@ function moveSShip(){
 
     if(muteki%2 == 0) drawImgC(1, ssX,ssY);
     if(muteki > 0) muteki--;
+
 }
 
 //発射ミサイルの管理
-var MSL_MAX = 20;
+var MSL_MAX = 100;
 var mslX  = new Array(MSL_MAX);
 var mslY  = new Array(MSL_MAX);
 var mslXp = new Array(MSL_MAX);
@@ -102,13 +164,10 @@ var mslYp = new Array(MSL_MAX);
 var mslF  = new Array(MSL_MAX);//弾が撃ち出された状態か管理する
 var mslImg = new Array(MSL_MAX);
 var mslNum = 0;
-var weapon = 0;
-var laser = 0;
 
 function initMissile(){
     for(var i=0; i<MSL_MAX; i++) mslF[i] = false;
     mslNum = 0;
-    laser = 0;
 }
 
 function setMissile(x, y, xp, yp){
@@ -125,7 +184,7 @@ function setMissile(x, y, xp, yp){
     mslNum = (mslNum+1)%MSL_MAX;
 }
 
-function movemissile(){
+function moveMissile(){
     for(var i=0; i<MSL_MAX; i++){
         if(mslF[i] == true){
             mslX[i] += mslXp[i];
@@ -145,10 +204,11 @@ function setWeapon(){
 }
 
 //敵機と敵の弾の管理
+var OBJ_MAX = 100;
 var objType = new Array(OBJ_MAX);//0=敵の弾　1=敵機
 var objImg = new Array(OBJ_MAX);
 var objLife= new Array(OBJ_MAX);
-var OBJ_MAX = 100;
+
 var objX = new Array(OBJ_MAX);
 var objY = new Array(OBJ_MAX);
 var objXp = new Array(OBJ_MAX);
@@ -209,6 +269,7 @@ function moveObject(){
                             if(objLife[i] == 0){
                                 objF[i] = false;
                                 setEffect(objX[i], objY[i], 9);
+                                score += 100;
                             }
                             else{
                                 setEffect(objX[i], objY[i], 3);
@@ -219,25 +280,68 @@ function moveObject(){
                 }
             }
             //自機とのヒットチェック
-            var r = 30 +(img[objImg[i]].width + img[objImg[i]].height)/4;//自機と敵機の距離
-            if(getDis(objX[i], objY[i], ssX, ssY) < r){
-                if(objType[i] <= 1 && muteki == 0){//敵の弾と敵機
-                    setEffect(objX[i], objY[i], 3)
-                    objF[i] = false;
-                    energy--;
-                    muteki = 30;
-                }
-                if(objType[i] == 2){//アイテム
-                    objF[i] = false;
-                    if(objImg[i] == 9 && energy < 10) energy++;
-                    if(objImg[i] == 10) weapon++;
-                    if(objImg[i] == 11) laser += 100;
+            if(idx == 1){//ゲーム中
+                var r = 30 +(img[objImg[i]].width + img[objImg[i]].height)/4;//自機と敵機の距離
+                if(getDis(objX[i], objY[i], ssX, ssY) < r){
+                    if(objType[i] <= 1 && muteki == 0){//敵の弾と敵機
+                        setEffect(objX[i], objY[i], 3)
+                        objF[i] = false;
+                        energy--;
+                        muteki = 30;
+                        if(energy == 0){
+                            idx = 2;
+                            timer = 0;
+                            stopBgm();
+                        }
+                    }
+                    if(objType[i] == 2){//アイテム
+                        objF[i] = false;
+                        if(objImg[i] == 9 && energy < 10) energy++;
+                        if(objImg[i] == 10) weapon++;
+                        if(objImg[i] == 11) laser += 100;
+                    }
                 }
             }
         }
     }
 }
 
+function setEnemy(){
+    var sec = int(timer/30);//経過秒数
+    if( 4<= sec && sec < 10){
+        if(timer%20 == 0)
+            setObject(1, 5, 1300, 60+rnd(600), -16*(1+0.1*stage), 0, 1*stage);//敵機1
+    }
+    if(14<= sec && sec < 20){
+        if(timer%20 == 0)
+            setObject(1, 6, 1300, 60+rnd(600), -12*(1+0.1*stage), 8*(1+0.1*stage), 3*stage);//敵機2
+    }
+    if(24<= sec && sec < 30){
+        if(timer%20 == 0)
+            setObject(1, 7, 1300, 360+rnd(300), -48*(1+0.1*stage), -10, 5*stage);//敵機3
+    }
+    if(34<= sec && sec < 50){
+        if(timer%60 == 0)
+            setObject(1, 8, 1300, rnd(720-192), -6*(1+0.1*stage), 0, 0);//障害物
+    }
+    if(54<= sec && sec < 70){
+        if(timer%20 == 0) {
+            setObject(1, 5, 1300,  60+rnd(300), -16*(1+0.1*stage),  4, 1*stage);//敵機1
+            setObject(1, 5, 1300, 360+rnd(300), -16*(1+0.1*stage), -4, 1*stage);//敵機1
+        }
+    }
+    if(74<= sec && sec <90){
+        if(timer%20 == 0) 
+            setObject(1, 6, 1300, 60+rnd(600), -12*(1+0.1*stage), 8*(1+0.1*stage), 3*stage);//敵機2
+        if(timer%45 == 0)
+            setObject(1, 8, 1300, rnd(720-192), -8*(1+0.1*stage), 0, 0);//障害物
+    }
+    if(94<= sec && sec <110)
+        if(timer%10 == 0)
+            setObject(1, 5, 1300, 360, -24*(1+0.1*stage), rnd(11)-5, 1*stage);//敵機1
+        if(timer%20 == 0)
+            setObject(1, 7, 1300, rnd(300), -56*(1+0.1*stage), 4+rnd(12), 5*stage);//敵機3
+}
 //エフェクト（爆発）の管理
 var EFCT_MAX = 100;
 var efctX = new Array(EFCT_MAX);
@@ -268,7 +372,7 @@ function drawEffect(){
 }
 //アイテム管理
 function setItem(){
-    if(timer%90 ==  0) setObject(2,  9, 1300, 60+rnd(600), -10, 0, 0);//energy
-    if(timer%90 == 30) setObject(2, 10, 1300, 60+rnd(600), -10, 0, 0);//missile
-    if(timer%90 == 60) setObject(2, 11, 1300, 60+rnd(600), -10, 0, 0);//laser
+    if(timer%180 ==  0) setObject(2,  9, 1300, 60+rnd(600), -10, 0, 0);//energy
+    if(timer%180 == 60) setObject(2, 10, 1300, 60+rnd(600), -10, 0, 0);//missile
+    if(timer%180 == 90) setObject(2, 11, 1300, 60+rnd(600), -10, 0, 0);//laser
 }
